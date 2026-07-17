@@ -234,7 +234,7 @@ pub fn build_verdict(
 
     Verdict {
         label: VerdictLabel::Clear,
-        reason: "Your network is minty fresh. Go take the call.".to_string(),
+        reason: "If the call lags, blame your colleague.".to_string(),
     }
 }
 

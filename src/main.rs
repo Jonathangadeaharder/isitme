@@ -199,6 +199,10 @@ async fn run_all_pings_parallel() -> Vec<PingStats> {
             bar.set_message(label);
         }
     }
+    // Stop the steady-tick thread BEFORE clearing, otherwise the tick
+    // thread races with subsequent println output and leaves a stale
+    // spinner line visible above the banner.
+    bar.disable_steady_tick();
     bar.finish_and_clear();
     results
         .into_iter()
