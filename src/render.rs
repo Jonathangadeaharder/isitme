@@ -147,57 +147,38 @@ pub fn diagnostic_table(pings: &[PingStats], speed: Option<&SpeedStats>) -> Stri
     render_table(&headers, &rows)
 }
 
-/// Big prominent banner: giant ASCII-art verdict headline, the funny
+/// Big prominent banner: giant FIGlet verdict headline, the funny
 /// one-liner reason below it. `worst` shades the Clear case green (all
 /// OK) vs yellow (usable with warnings).
 ///
-/// The art is hand-authored (not figlet) so there is no font-file dep
-/// and the output stays pipe-safe. Each glyph is 5 rows tall.
+/// Uses the standard FIGlet font (via figlet-rs) for legible, proven
+/// letterforms. Pure text generation: pipe-safe, no TUI event loop.
 pub fn verdict_banner(verdict: &Verdict, worst: Status) -> String {
     use VerdictLabel::*;
-    let (art, color): (&[&str], fn(&str) -> String) = match verdict.label {
-        You => (ART_IT_IS_YOU, |s: &str| s.red().bold().to_string()),
-        Vendor => (ART_IT_IS_THEM, |s: &str| s.yellow().bold().to_string()),
+    let (text, color): (&str, fn(&str) -> String) = match verdict.label {
+        You => ("IT IS YOU", |s: &str| s.red().bold().to_string()),
+        Vendor => ("IT IS THEM", |s: &str| s.yellow().bold().to_string()),
         Clear => match worst {
-            Status::Ok => (ART_IT_IS_NOT_YOU, |s: &str| s.green().bold().to_string()),
-            _ => (ART_IT_IS_NOT_YOU, |s: &str| s.yellow().bold().to_string()),
+            Status::Ok => ("IT IS NOT YOU", |s: &str| s.green().bold().to_string()),
+            _ => ("IT IS NOT YOU", |s: &str| s.yellow().bold().to_string()),
         },
     };
+    let art = figlet_banner(text).unwrap_or_else(|| text.to_string());
     let colored: String = art
-        .iter()
+        .lines()
         .map(|line| format!("{}\n", color(line)))
         .collect();
     format!("{}\n  {}\n", colored, verdict.reason)
 }
 
-// 5-row block font, glyph width 4 (space-separated). Compact enough
-// for a 60-column terminal. Hand-authored to avoid a figlet dep.
-const ART_IT_IS_YOU: &[&str] = &[
-    "██╗ ██████╗ ██╗  ██╗",
-    "██║██╔═══██╗██║  ██║",
-    "██║██║   ██║███████║",
-    "██║██║   ██║╚██╔══██║",
-    "╚═╝╚██████╔╝ ╚═╝ ╚═╝",
-    "     ╚═════╝        ",
-];
-
-const ART_IT_IS_NOT_YOU: &[&str] = &[
-    "██╗ ██████╗ ██╗  ██╗ ███╗   ██╗ ██████╗ ██╗  ██╗",
-    "██║██╔═══██╗██║  ██║ ████╗  ██║██╔═══██╗██║  ██║",
-    "██║██║   ██║███████║ ██╔██╗ ██║██║   ██║███████║",
-    "██║██║   ██║╚██╔══██║ ██║╚██╗██║██║   ██║╚██╔══██║",
-    "╚═╝╚██████╔╝ ╚═╝ ╚═╝ ██║ ╚████║╚██████╔╝ ╚═╝ ╚═╝",
-    "     ╚═════╝         ╚═╝  ╚═══╝ ╚═════╝        ",
-];
-
-const ART_IT_IS_THEM: &[&str] = &[
-    "████████╗██╗  ██╗███████╗███╗   ███╗",
-    "╚══██╔══╝██║  ██║██╔════╝████╗ ████║",
-    "   ██║   ███████║█████╗  ██╔████╔██║",
-    "   ██║   ██╔══██║██╔══╝  ██║╚██╔╝██║",
-    "   ╚═╝   ╚═╝  ╚═╝███████╗╚═╝ ╚═╝╚═╝",
-    "                 ╚══════╝          ",
-];
+/// Render `text` with the big FIGlet font. The big font's taller
+/// glyphs (7 rows) read clearly even to OCR/vision models, where the
+/// standard font's thinner strokes can be ambiguous.
+fn figlet_banner(text: &str) -> Option<String> {
+    let font = figlet_rs::FIGlet::big().ok()?;
+    let figure = font.convert(text)?;
+    Some(figure.as_str())
+}
 
 #[cfg(test)]
 mod tests {
@@ -299,8 +280,8 @@ mod tests {
         };
         let banner = verdict_banner(&v, Status::Ok);
         let stripped = strip_ansi(&banner);
-        // Banner has block-art (not literal letters) plus the reason.
-        assert!(stripped.contains("█"));
+        // Figlet art uses underscore/pipe chars; the reason follows.
+        assert!(stripped.contains('_') || stripped.contains('|'));
         assert!(stripped.contains("test reason here"));
     }
 
@@ -312,7 +293,7 @@ mod tests {
         };
         let banner = verdict_banner(&v, Status::Bad);
         let stripped = strip_ansi(&banner);
-        assert!(stripped.contains("█"));
+        assert!(stripped.contains('_') || stripped.contains('|'));
         assert!(stripped.contains("your network"));
     }
 
@@ -324,7 +305,7 @@ mod tests {
         };
         let banner = verdict_banner(&v, Status::Bad);
         let stripped = strip_ansi(&banner);
-        assert!(stripped.contains("█"));
+        assert!(stripped.contains('_') || stripped.contains('|'));
         assert!(stripped.contains("zoom down"));
     }
 
