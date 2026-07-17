@@ -129,7 +129,12 @@ pub fn ping_table(pings: &[PingStats]) -> String {
         .iter()
         .map(|p| {
             vec![
-                format!("{} ({})", p.target, crate::targets::label_for(&p.target)),
+                format!(
+                    "{}{} ({})",
+                    p.target,
+                    if crate::targets::is_baseline(&p.target) { " [baseline]" } else { "" },
+                    crate::targets::label_for(&p.target),
+                ),
                 fmt_ms(p.min_ms()),
                 fmt_ms(p.avg_ms()),
                 fmt_ms(p.max_ms()),
@@ -160,15 +165,30 @@ pub fn speed_table(speed: &SpeedStats) -> String {
     render_table(&headers, &rows)
 }
 
-/// Render the colored verdict line. Color is best-effort; the caller
-/// decides whether to suppress via `--no-color` by not calling this.
-pub fn verdict_line(verdict: &Verdict) -> String {
-    let label = match verdict.label {
-        VerdictLabel::You => "It's you.".red().bold().to_string(),
-        VerdictLabel::Vendor => "It's them.".yellow().bold().to_string(),
-        VerdictLabel::Clear => "All clear.".green().bold().to_string(),
+/// Footnote naming the speed-test endpoint and payload sizes.
+pub fn speed_endpoint_note(endpoint: &str, down_mb: usize, up_mb: usize) -> String {
+    format!(
+        "speed test via {} ({}MB down / {}MB up)",
+        endpoint, down_mb, up_mb,
+    )
+}
+
+/// Big prominent banner for the verdict. Drawn with a full-width rule
+/// above and below the verdict text so it reads as the headline.
+///
+/// `worst` is the overall worst metric status; it shades the Clear
+/// case green (all OK) vs yellow (usable with warnings).
+pub fn verdict_banner(verdict: &Verdict, worst: Status) -> String {
+    let (text, color): (&str, fn(&str) -> String) = match verdict.label {
+        VerdictLabel::You => ("IT IS YOU", |s| s.red().bold().to_string()),
+        VerdictLabel::Vendor => ("IT IS THEM", |s| s.yellow().bold().to_string()),
+        VerdictLabel::Clear => match worst {
+            Status::Ok => ("IT IS NOT YOU", |s: &str| s.green().bold().to_string()),
+            _ => ("IT IS NOT YOU", |s: &str| s.yellow().bold().to_string()),
+        },
     };
-    format!("{} {}", label, verdict.reason.white())
+    let rule = "═".repeat(60);
+    format!("{}\n   {}  {}\n{}", rule, color(text), verdict.reason, rule)
 }
 
 #[cfg(test)]
@@ -261,15 +281,46 @@ mod tests {
     }
 
     #[test]
-    fn verdict_line_contains_reason() {
+    fn verdict_banner_shows_headline_and_reason() {
         let v = Verdict {
             label: VerdictLabel::Clear,
             reason: "test reason here".to_string(),
         };
-        let line = verdict_line(&v);
-        let stripped = strip_ansi(&line);
-        assert!(stripped.contains("All clear."));
+        let banner = verdict_banner(&v, Status::Ok);
+        let stripped = strip_ansi(&banner);
+        assert!(stripped.contains("IT IS NOT YOU"));
         assert!(stripped.contains("test reason here"));
+        // Both top and bottom rules present.
+        assert_eq!(stripped.matches('═').count(), 120);
+    }
+
+    #[test]
+    fn verdict_banner_you_when_label_you() {
+        let v = Verdict {
+            label: VerdictLabel::You,
+            reason: "your network".to_string(),
+        };
+        let banner = verdict_banner(&v, Status::Bad);
+        let stripped = strip_ansi(&banner);
+        assert!(stripped.contains("IT IS YOU"));
+        assert!(stripped.contains("your network"));
+    }
+
+    #[test]
+    fn verdict_banner_vendor_when_label_vendor() {
+        let v = Verdict {
+            label: VerdictLabel::Vendor,
+            reason: "zoom down".to_string(),
+        };
+        let banner = verdict_banner(&v, Status::Bad);
+        let stripped = strip_ansi(&banner);
+        assert!(stripped.contains("IT IS THEM"));
+    }
+
+    #[test]
+    fn speed_endpoint_note_formats() {
+        let n = speed_endpoint_note("speed.cloudflare.com", 10, 5);
+        assert_eq!(n, "speed test via speed.cloudflare.com (10MB down / 5MB up)");
     }
 
     fn strip_ansi(s: &str) -> String {

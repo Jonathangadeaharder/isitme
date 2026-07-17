@@ -1,23 +1,25 @@
 //! isitme: is it me, or is it them? Diagnose network quality for calls.
 
+mod ping;
+mod render;
+mod speed;
 mod targets;
 mod verdict;
-mod ping;
-mod speed;
-mod render;
 
 use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
+use tokio::task::JoinSet;
 
-use ping::{run_ping, PING_COUNT};
-use render::{ping_table, speed_table, verdict_line};
-use speed::run_speed_test;
-use targets::{hosts, is_baseline, label_for, BASELINE_HOST};
-use verdict::{build_verdict, exit_code, PingStats, SpeedStats, Verdict, VerdictLabel};
+use ping::{run_ping_async, PING_COUNT};
+use render::{ping_table, speed_endpoint_note, speed_table, verdict_banner};
+use speed::{run_speed_test, SPEED_ENDPOINT, UPLOAD_BYTES};
+use targets::{hosts, BASELINE_HOST};
+use verdict::{build_verdict, exit_code, PingStats, SpeedStats, Status, Verdict};
+
+const DOWN_MB: usize = 10;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -52,12 +54,14 @@ struct Report {
     verdict: Verdict,
 }
 
-fn verdict_plain_label(verdict: &Verdict) -> &'static str {
-    match verdict.label {
-        VerdictLabel::You => "It's you.",
-        VerdictLabel::Vendor => "It's them.",
-        VerdictLabel::Clear => "All clear.",
+fn worst_status(pings: &[PingStats], speed: Option<&SpeedStats>) -> Status {
+    let mut worst = speed
+        .map(|s| s.overall())
+        .unwrap_or(Status::Ok);
+    for p in pings {
+        worst = Status::worst_of(&[worst, p.overall()]);
     }
+    worst
 }
 
 #[tokio::main]
@@ -66,19 +70,25 @@ async fn main() -> Result<()> {
 
     owo_colors::set_override(!cli.no_color);
 
-    let pings = if cli.speed_only {
-        Vec::new()
-    } else {
-        run_all_pings()
+    // Run pings and speed test concurrently. Pings fan out across all
+    // targets in parallel; the speed test runs in the same window.
+    let pings_fut = run_all_pings_parallel();
+    let speed_fut = async {
+        if cli.ping_only {
+            None
+        } else {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .ok()?;
+            Some(run_speed_test(&client).await)
+        }
     };
 
-    let speed = if cli.ping_only {
-        None
+    let (pings, speed) = if cli.speed_only {
+        (Vec::new(), speed_fut.await)
     } else {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()?;
-        Some(run_speed_test(&client).await)
+        tokio::join!(pings_fut, speed_fut)
     };
 
     let verdict = build_verdict(BASELINE_HOST, &pings, speed.as_ref());
@@ -91,46 +101,46 @@ async fn main() -> Result<()> {
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
+        // Banner first: the answer to "is it me?" is the headline.
+        let worst = worst_status(&pings, speed.as_ref());
+        println!("\n{}", verdict_banner(&verdict, worst));
+
+        // Supporting detail below.
         if !pings.is_empty() {
             println!("\n{}", ping_table(&pings));
         }
         if let Some(s) = &speed {
             println!("\n{}", speed_table(s));
-        }
-        if !cli.no_color {
-            println!("\n{}", verdict_line(&verdict));
-        } else {
-            println!("\n{} {}", verdict_plain_label(&verdict), verdict.reason);
+            println!("\n{}", speed_endpoint_note(SPEED_ENDPOINT, DOWN_MB, UPLOAD_BYTES / 1_000_000));
         }
     }
 
     std::process::exit(exit_code(verdict.label));
 }
 
-fn run_all_pings() -> Vec<PingStats> {
+/// Ping all targets concurrently. Each target spawns its own ping
+/// process on a blocking thread; results are reassembled in declared
+/// target order so the table output is stable across runs.
+async fn run_all_pings_parallel() -> Vec<PingStats> {
     let targets = hosts();
-    let bar = ProgressBar::new(targets.len() as u64);
-    bar.set_style(
-        ProgressStyle::with_template("{spinner} pinging {msg} ({pos}/{len})")
-            .unwrap(),
-    );
-
-    let mut results = Vec::with_capacity(targets.len());
-    for host in targets {
-        let tag = if is_baseline(host) { " [baseline]" } else { "" };
-        bar.set_message(format!("{}{}", label_for(host), tag));
-        let stats = match run_ping(host, PING_COUNT) {
-            Ok(s) => s,
-            Err(_) => PingStats {
-                target: host.to_string(),
-                samples_ms: Vec::new(),
-                packets_sent: PING_COUNT,
-                packets_received: 0,
-            },
-        };
-        results.push(stats);
-        bar.inc(1);
+    let mut set: JoinSet<(usize, PingStats)> = JoinSet::new();
+    for (i, host) in targets.iter().enumerate() {
+        let host = host.to_string();
+        set.spawn(async move {
+            let stats = run_ping_async(host, PING_COUNT).await;
+            (i, stats)
+        });
     }
-    bar.finish_and_clear();
-    results
+    let mut results: Vec<Option<PingStats>> = (0..targets.len()).map(|_| None).collect();
+    while let Some(res) = set.join_next().await {
+        if let Ok((i, stats)) = res {
+            results[i] = Some(stats);
+        }
+    }
+    results.into_iter().map(|o| o.unwrap_or(PingStats {
+        target: String::new(),
+        samples_ms: Vec::new(),
+        packets_sent: PING_COUNT,
+        packets_received: 0,
+    })).collect()
 }

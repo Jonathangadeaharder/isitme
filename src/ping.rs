@@ -8,8 +8,9 @@ use std::process::Command;
 
 use crate::verdict::PingStats;
 
-/// Number of ICMP probes per target.
-pub const PING_COUNT: u32 = 8;
+/// Number of ICMP probes per target. Five gives min/avg/max/jitter
+/// without spending much wall-clock time (default 1s interval).
+pub const PING_COUNT: u32 = 5;
 
 /// Spawn ping for `host`, return parsed stats.
 pub fn run_ping(host: &str, count: u32) -> std::io::Result<PingStats> {
@@ -24,6 +25,29 @@ pub fn run_ping(host: &str, count: u32) -> std::io::Result<PingStats> {
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     Ok(parse_ping_output(host, count, &stdout, &stderr))
+}
+
+/// Async wrapper that runs `run_ping` on a blocking thread so many
+/// targets can be pinged concurrently via `tokio::join!` / `join_all`.
+pub async fn run_ping_async(host: String, count: u32) -> PingStats {
+    let outer_fallback = host.clone();
+    let inner_fallback = host.clone();
+    let inner = tokio::task::spawn_blocking(move || {
+        run_ping(&host, count).unwrap_or_else(|_| PingStats {
+            target: inner_fallback,
+            samples_ms: Vec::new(),
+            packets_sent: count,
+            packets_received: 0,
+        })
+    });
+    inner
+        .await
+        .unwrap_or_else(|_| PingStats {
+            target: outer_fallback,
+            samples_ms: Vec::new(),
+            packets_sent: count,
+            packets_received: 0,
+        })
 }
 
 /// Parse ping stdout into PingStats.

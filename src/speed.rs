@@ -8,9 +8,15 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::verdict::SpeedStats;
 
-const DOWN_URL: &str = "https://speed.cloudflare.com/__down?bytes=25000000";
+/// Cloudflare's public speed-test endpoint. Free, globally distributed,
+/// and not a call vendor, so it measures your generic internet path
+/// rather than biasing toward any one platform.
+pub const SPEED_ENDPOINT: &str = "speed.cloudflare.com";
+
+const DOWN_URL: &str = "https://speed.cloudflare.com/__down?bytes=10000000";
 const UP_URL: &str = "https://speed.cloudflare.com/__up";
-const UPLOAD_BYTES: usize = 25_000_000;
+const DOWN_BYTES: usize = 10_000_000;
+pub const UPLOAD_BYTES: usize = 5_000_000;
 
 /// Convert byte count and elapsed seconds into Mbps.
 pub fn mbps_from_bytes_seconds(bytes: u64, seconds: f64) -> f64 {
@@ -32,7 +38,7 @@ pub async fn run_speed_test(client: &reqwest::Client) -> SpeedStats {
 }
 
 async fn download(client: &reqwest::Client) -> Result<f64> {
-    let bar = ProgressBar::new(25_000_000);
+    let bar = ProgressBar::new(DOWN_BYTES as u64);
     bar.set_style(
         ProgressStyle::with_template("{spinner} {msg} {wide_bar} {bytes}/{total_bytes}")
             .unwrap(),
@@ -59,7 +65,7 @@ async fn upload(client: &reqwest::Client) -> Result<f64> {
     );
     bar.set_message("upload");
 
-    // Load body into memory; 25MB is fine for a CLI diagnostic tool.
+    // Load body into memory; 5MB is fine for a CLI diagnostic tool.
     let body = vec![0u8; UPLOAD_BYTES];
     let start = std::time::Instant::now();
     let resp = client
