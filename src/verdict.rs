@@ -216,7 +216,7 @@ pub fn build_verdict(
     if baseline_bad || speed_bad {
         return Verdict {
             label: VerdictLabel::You,
-            reason: "Baseline DNS or speed test is BAD. Your network is the likely cause."
+            reason: "Your network is the problem. Try restarting your router, or your reputation."
                 .to_string(),
         };
     }
@@ -229,7 +229,7 @@ pub fn build_verdict(
         return Verdict {
             label: VerdictLabel::Vendor,
             reason: format!(
-                "{} is unreachable or degraded while baseline is fine. Likely their side.",
+                "{} is having a bad day. Not your fault. Send a passive-aggressive support ticket.",
                 v.target
             ),
         };
@@ -241,14 +241,14 @@ pub fn build_verdict(
     if any_warn {
         return Verdict {
             label: VerdictLabel::Clear,
-            reason: "Network is usable but with warnings. Call quality may be degraded."
+            reason: "It works, barely. Like your Monday motivation."
                 .to_string(),
         };
     }
 
     Verdict {
         label: VerdictLabel::Clear,
-        reason: "All metrics within OK thresholds. Not you.".to_string(),
+        reason: "Your network is minty fresh. Go take the call.".to_string(),
     }
 }
 
@@ -438,7 +438,7 @@ mod tests {
         };
         let v = build_verdict("8.8.8.8", &pings, Some(&speed));
         assert_eq!(v.label, VerdictLabel::Clear);
-        assert!(v.reason.contains("warnings"));
+        assert!(v.reason.contains("barely"));
     }
 
     #[test]

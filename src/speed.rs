@@ -13,10 +13,10 @@ use crate::verdict::SpeedStats;
 /// rather than biasing toward any one platform.
 pub const SPEED_ENDPOINT: &str = "speed.cloudflare.com";
 
-const DOWN_URL: &str = "https://speed.cloudflare.com/__down?bytes=10000000";
+const DOWN_URL: &str = "https://speed.cloudflare.com/__down?bytes=4000000";
 const UP_URL: &str = "https://speed.cloudflare.com/__up";
-const DOWN_BYTES: usize = 10_000_000;
-pub const UPLOAD_BYTES: usize = 5_000_000;
+const DOWN_BYTES: usize = 4_000_000;
+pub const UPLOAD_BYTES: usize = 2_000_000;
 
 /// Convert byte count and elapsed seconds into Mbps.
 pub fn mbps_from_bytes_seconds(bytes: u64, seconds: f64) -> f64 {

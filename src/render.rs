@@ -187,7 +187,7 @@ pub fn verdict_banner(verdict: &Verdict, worst: Status) -> String {
             _ => ("IT IS NOT YOU", |s: &str| s.yellow().bold().to_string()),
         },
     };
-    let rule = "═".repeat(60);
+    let rule = "═".repeat(50);
     format!("{}\n   {}  {}\n{}", rule, color(text), verdict.reason, rule)
 }
 
@@ -291,7 +291,7 @@ mod tests {
         assert!(stripped.contains("IT IS NOT YOU"));
         assert!(stripped.contains("test reason here"));
         // Both top and bottom rules present.
-        assert_eq!(stripped.matches('═').count(), 120);
+        assert_eq!(stripped.matches('═').count(), 100);
     }
 
     #[test]

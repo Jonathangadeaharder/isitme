@@ -8,9 +8,10 @@ use std::process::Command;
 
 use crate::verdict::PingStats;
 
-/// Number of ICMP probes per target. Five gives min/avg/max/jitter
-/// without spending much wall-clock time (default 1s interval).
-pub const PING_COUNT: u32 = 5;
+/// Number of ICMP probes per target. Three keeps it fast (default 1s
+/// interval => ~2s per target, run in parallel) while still giving
+/// min/avg/max and a rough jitter reading.
+pub const PING_COUNT: u32 = 3;
 
 /// Spawn ping for `host`, return parsed stats.
 pub fn run_ping(host: &str, count: u32) -> std::io::Result<PingStats> {

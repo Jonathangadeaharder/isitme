@@ -19,7 +19,7 @@ use speed::{run_speed_test, SPEED_ENDPOINT, UPLOAD_BYTES};
 use targets::{hosts, BASELINE_HOST};
 use verdict::{build_verdict, exit_code, PingStats, SpeedStats, Status, Verdict};
 
-const DOWN_MB: usize = 10;
+const DOWN_MB: usize = 4;
 
 #[derive(Parser, Debug)]
 #[command(
