@@ -4,7 +4,6 @@
 //! network I/O is a thin wrapper around that pure function.
 
 use anyhow::Result;
-use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::verdict::SpeedStats;
@@ -41,11 +40,9 @@ async fn download(client: &reqwest::Client) -> Result<f64> {
     bar.set_message("download");
 
     let start = std::time::Instant::now();
-    let resp = client.get(DOWN_URL).send().await?.error_for_status()?;
-    let mut stream = resp.bytes_stream();
+    let mut resp = client.get(DOWN_URL).send().await?.error_for_status()?;
     let mut total: u64 = 0;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
+    while let Some(chunk) = resp.chunk().await? {
         total += chunk.len() as u64;
         bar.inc(chunk.len() as u64);
     }
