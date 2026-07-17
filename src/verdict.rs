@@ -52,20 +52,6 @@ impl PingStats {
         Some(self.samples_ms.iter().sum::<f64>() / self.samples_ms.len() as f64)
     }
 
-    pub fn min_ms(&self) -> Option<f64> {
-        self.samples_ms.iter().copied().fold(None, |acc, v| match acc {
-            None => Some(v),
-            Some(cur) => Some(cur.min(v)),
-        })
-    }
-
-    pub fn max_ms(&self) -> Option<f64> {
-        self.samples_ms.iter().copied().fold(None, |acc, v| match acc {
-            None => Some(v),
-            Some(cur) => Some(cur.max(v)),
-        })
-    }
-
     /// Sample standard deviation of RTTs (jitter proxy).
     pub fn jitter_ms(&self) -> Option<f64> {
         let n = self.samples_ms.len();
@@ -336,8 +322,6 @@ mod tests {
     fn avg_and_jitter_basic() {
         let s = stats("x", &[10.0, 20.0, 30.0], 3, 3);
         assert_eq!(s.avg_ms(), Some(20.0));
-        assert_eq!(s.min_ms(), Some(10.0));
-        assert_eq!(s.max_ms(), Some(30.0));
         assert!(s.jitter_ms().unwrap() > 9.0 && s.jitter_ms().unwrap() < 11.0);
     }
 

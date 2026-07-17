@@ -137,8 +137,6 @@ rtt min/avg/max/mdev = 11.200/12.300/13.400/0.900 ms\n";
         assert_eq!(s.packets_received, 4);
         assert_eq!(s.loss_pct(), 0.0);
         assert!(approx(s.avg_ms(), 12.9));
-        assert!(approx(s.min_ms(), 11.234));
-        assert!(approx(s.max_ms(), 14.567));
     }
 
     #[test]

@@ -23,14 +23,6 @@ fn fmt_mbps(opt: Option<f64>) -> String {
     }
 }
 
-fn status_str(s: Status) -> String {
-    match s {
-        Status::Ok => "OK".to_string(),
-        Status::Warn => "WARN".to_string(),
-        Status::Bad => "BAD".to_string(),
-    }
-}
-
 /// Render a fixed-schema table with rounded Unicode box borders.
 ///
 /// `headers` and every row must have the same length. Cells are
@@ -122,74 +114,90 @@ fn render_table(headers: &[&str], rows: &[Vec<String>]) -> String {
     out
 }
 
-/// Build the ping table string.
-pub fn ping_table(pings: &[PingStats]) -> String {
-    let headers = ["target", "min", "avg", "max", "jitter", "loss", "status"];
-    let rows: Vec<Vec<String>> = pings
+/// One compact diagnostic table: per-target latency (avg, jitter, loss)
+/// with speed folded in as a final row. Min/max are dropped; avg is the
+/// only latency number that matters for a quick gut check during a call.
+pub fn diagnostic_table(pings: &[PingStats], speed: Option<&SpeedStats>) -> String {
+    let headers = ["target", "latency", "jitter", "loss", "speed"];
+    let mut rows: Vec<Vec<String>> = pings
         .iter()
         .map(|p| {
             vec![
-                format!(
-                    "{}{} ({})",
-                    p.target,
-                    if crate::targets::is_baseline(&p.target) { " [baseline]" } else { "" },
-                    crate::targets::label_for(&p.target),
-                ),
-                fmt_ms(p.min_ms()),
+                crate::targets::label_for(&p.target).to_string(),
                 fmt_ms(p.avg_ms()),
-                fmt_ms(p.max_ms()),
                 fmt_ms(p.jitter_ms()),
-                format!("{:.1}%", p.loss_pct()),
-                status_str(p.overall()),
+                format!("{:.0}%", p.loss_pct()),
+                "-".to_string(),
             ]
         })
         .collect();
+    if let Some(s) = speed {
+        rows.push(vec![
+            "Internet (CF)".to_string(),
+            "-".to_string(),
+            "-".to_string(),
+            "-".to_string(),
+            format!(
+                "{} ↓ / {} ↑",
+                fmt_mbps(s.download_mbps),
+                fmt_mbps(s.upload_mbps),
+            ),
+        ]);
+    }
     render_table(&headers, &rows)
 }
 
-/// Build the speed table string.
-pub fn speed_table(speed: &SpeedStats) -> String {
-    let headers = ["direction", "mbps", "status"];
-    let rows = vec![
-        vec![
-            "download".to_string(),
-            fmt_mbps(speed.download_mbps),
-            status_str(speed.download_status()),
-        ],
-        vec![
-            "upload".to_string(),
-            fmt_mbps(speed.upload_mbps),
-            status_str(speed.upload_status()),
-        ],
-    ];
-    render_table(&headers, &rows)
-}
-
-/// Footnote naming the speed-test endpoint and payload sizes.
-pub fn speed_endpoint_note(endpoint: &str, down_mb: usize, up_mb: usize) -> String {
-    format!(
-        "speed test via {} ({}MB down / {}MB up)",
-        endpoint, down_mb, up_mb,
-    )
-}
-
-/// Big prominent banner for the verdict. Drawn with a full-width rule
-/// above and below the verdict text so it reads as the headline.
+/// Big prominent banner: giant ASCII-art verdict headline, the funny
+/// one-liner reason below it. `worst` shades the Clear case green (all
+/// OK) vs yellow (usable with warnings).
 ///
-/// `worst` is the overall worst metric status; it shades the Clear
-/// case green (all OK) vs yellow (usable with warnings).
+/// The art is hand-authored (not figlet) so there is no font-file dep
+/// and the output stays pipe-safe. Each glyph is 5 rows tall.
 pub fn verdict_banner(verdict: &Verdict, worst: Status) -> String {
-    let (text, color): (&str, fn(&str) -> String) = match verdict.label {
-        VerdictLabel::You => ("IT IS YOU", |s| s.red().bold().to_string()),
-        VerdictLabel::Vendor => ("IT IS THEM", |s| s.yellow().bold().to_string()),
-        VerdictLabel::Clear => match worst {
-            Status::Ok => ("IT IS NOT YOU", |s: &str| s.green().bold().to_string()),
-            _ => ("IT IS NOT YOU", |s: &str| s.yellow().bold().to_string()),
+    use VerdictLabel::*;
+    let (art, color): (&[&str], fn(&str) -> String) = match verdict.label {
+        You => (ART_IT_IS_YOU, |s: &str| s.red().bold().to_string()),
+        Vendor => (ART_IT_IS_THEM, |s: &str| s.yellow().bold().to_string()),
+        Clear => match worst {
+            Status::Ok => (ART_IT_IS_NOT_YOU, |s: &str| s.green().bold().to_string()),
+            _ => (ART_IT_IS_NOT_YOU, |s: &str| s.yellow().bold().to_string()),
         },
     };
-    let rule = "═".repeat(50);
-    format!("{}\n   {}  {}\n{}", rule, color(text), verdict.reason, rule)
+    let colored: String = art
+        .iter()
+        .map(|line| format!("{}\n", color(line)))
+        .collect();
+    format!("{}\n  {}\n", colored, verdict.reason)
 }
+
+// 5-row block font, glyph width 4 (space-separated). Compact enough
+// for a 60-column terminal. Hand-authored to avoid a figlet dep.
+const ART_IT_IS_YOU: &[&str] = &[
+    "██╗ ██████╗ ██╗  ██╗",
+    "██║██╔═══██╗██║  ██║",
+    "██║██║   ██║███████║",
+    "██║██║   ██║╚██╔══██║",
+    "╚═╝╚██████╔╝ ╚═╝ ╚═╝",
+    "     ╚═════╝        ",
+];
+
+const ART_IT_IS_NOT_YOU: &[&str] = &[
+    "██╗ ██████╗ ██╗  ██╗ ███╗   ██╗ ██████╗ ██╗  ██╗",
+    "██║██╔═══██╗██║  ██║ ████╗  ██║██╔═══██╗██║  ██║",
+    "██║██║   ██║███████║ ██╔██╗ ██║██║   ██║███████║",
+    "██║██║   ██║╚██╔══██║ ██║╚██╗██║██║   ██║╚██╔══██║",
+    "╚═╝╚██████╔╝ ╚═╝ ╚═╝ ██║ ╚████║╚██████╔╝ ╚═╝ ╚═╝",
+    "     ╚═════╝         ╚═╝  ╚═══╝ ╚═════╝        ",
+];
+
+const ART_IT_IS_THEM: &[&str] = &[
+    "████████╗██╗  ██╗███████╗███╗   ███╗",
+    "╚══██╔══╝██║  ██║██╔════╝████╗ ████║",
+    "   ██║   ███████║█████╗  ██╔████╔██║",
+    "   ██║   ██╔══██║██╔══╝  ██║╚██╔╝██║",
+    "   ╚═╝   ╚═╝  ╚═╝███████╗╚═╝ ╚═╝╚═╝",
+    "                 ╚══════╝          ",
+];
 
 #[cfg(test)]
 mod tests {
@@ -219,13 +227,6 @@ mod tests {
     }
 
     #[test]
-    fn status_str_round_trips() {
-        assert_eq!(status_str(Status::Ok), "OK");
-        assert_eq!(status_str(Status::Warn), "WARN");
-        assert_eq!(status_str(Status::Bad), "BAD");
-    }
-
-    #[test]
     fn render_table_empty_rows_has_header_only() {
         let t = render_table(&["a", "b"], &[]);
         assert!(t.contains('╭'));
@@ -250,48 +251,57 @@ mod tests {
     }
 
     #[test]
-    fn ping_table_contains_target_and_loss() {
+    fn diagnostic_table_shows_label_and_loss() {
         let pings = vec![stats("8.8.8.8", &[10.0, 20.0], 2, 2)];
-        let t = ping_table(&pings);
-        assert!(t.contains("8.8.8.8"));
-        assert!(t.contains("0.0%"));
-        assert!(t.contains("OK"));
+        let t = diagnostic_table(&pings, None);
+        // Label resolves to the human form, not the raw host.
+        assert!(t.contains("Google DNS (baseline)"));
+        assert!(t.contains("0%"));
     }
 
     #[test]
-    fn ping_table_has_all_seven_headers() {
+    fn diagnostic_table_has_five_headers() {
         let pings = vec![stats("8.8.8.8", &[10.0, 20.0], 2, 2)];
-        let t = ping_table(&pings);
-        for h in ["target", "min", "avg", "max", "jitter", "loss", "status"] {
+        let t = diagnostic_table(&pings, None);
+        for h in ["target", "latency", "jitter", "loss", "speed"] {
             assert!(t.contains(h), "missing header {}", h);
         }
     }
 
     #[test]
-    fn speed_table_shows_down_and_up() {
+    fn diagnostic_table_appends_speed_row_when_given() {
+        let pings = vec![stats("zoom.us", &[10.0, 20.0], 2, 2)];
         let s = SpeedStats {
             download_mbps: Some(50.0),
             upload_mbps: Some(10.0),
         };
-        let t = speed_table(&s);
-        assert!(t.contains("download"));
-        assert!(t.contains("upload"));
+        let t = diagnostic_table(&pings, Some(&s));
+        assert!(t.contains("Internet (CF)"));
         assert!(t.contains("50.0"));
         assert!(t.contains("10.0"));
+        assert!(t.contains("↓"));
+        assert!(t.contains("↑"));
     }
 
     #[test]
-    fn verdict_banner_shows_headline_and_reason() {
+    fn diagnostic_table_speed_dash_when_no_speed() {
+        let pings = vec![stats("8.8.8.8", &[10.0, 20.0], 2, 2)];
+        let t = diagnostic_table(&pings, None);
+        // No speed row appended.
+        assert!(!t.contains("Internet (CF)"));
+    }
+
+    #[test]
+    fn verdict_banner_shows_headline_words_and_reason() {
         let v = Verdict {
             label: VerdictLabel::Clear,
             reason: "test reason here".to_string(),
         };
         let banner = verdict_banner(&v, Status::Ok);
         let stripped = strip_ansi(&banner);
-        assert!(stripped.contains("IT IS NOT YOU"));
+        // Banner has block-art (not literal letters) plus the reason.
+        assert!(stripped.contains("█"));
         assert!(stripped.contains("test reason here"));
-        // Both top and bottom rules present.
-        assert_eq!(stripped.matches('═').count(), 100);
     }
 
     #[test]
@@ -302,7 +312,7 @@ mod tests {
         };
         let banner = verdict_banner(&v, Status::Bad);
         let stripped = strip_ansi(&banner);
-        assert!(stripped.contains("IT IS YOU"));
+        assert!(stripped.contains("█"));
         assert!(stripped.contains("your network"));
     }
 
@@ -314,13 +324,8 @@ mod tests {
         };
         let banner = verdict_banner(&v, Status::Bad);
         let stripped = strip_ansi(&banner);
-        assert!(stripped.contains("IT IS THEM"));
-    }
-
-    #[test]
-    fn speed_endpoint_note_formats() {
-        let n = speed_endpoint_note("speed.cloudflare.com", 10, 5);
-        assert_eq!(n, "speed test via speed.cloudflare.com (10MB down / 5MB up)");
+        assert!(stripped.contains("█"));
+        assert!(stripped.contains("zoom down"));
     }
 
     fn strip_ansi(s: &str) -> String {
