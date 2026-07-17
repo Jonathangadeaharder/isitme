@@ -5,11 +5,13 @@ mod render;
 mod speed;
 mod targets;
 mod verdict;
+mod version;
 
+use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
 use tokio::task::JoinSet;
@@ -29,6 +31,9 @@ use verdict::{build_verdict, exit_code, PingStats, SpeedStats, Status, Verdict};
 runs a Cloudflare-backed speed test, and prints a verdict."
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Skip the speed test (ping only).
     #[arg(long)]
     ping_only: bool,
@@ -46,48 +51,72 @@ struct Cli {
     json: bool,
 }
 
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Install the latest published version from crates.io.
+    Update,
+}
+
 #[derive(Serialize)]
 struct Report {
     pings: Vec<PingStats>,
     speed: Option<SpeedStats>,
     verdict: Verdict,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest_version: Option<String>,
 }
 
 fn worst_status(pings: &[PingStats], speed: Option<&SpeedStats>) -> Status {
-    let mut worst = speed
-        .map(|s| s.overall())
-        .unwrap_or(Status::Ok);
+    let mut worst = speed.map(|s| s.overall()).unwrap_or(Status::Ok);
     for p in pings {
         worst = Status::worst_of(&[worst, p.overall()]);
     }
     worst
 }
 
+/// Shared HTTP client. User-Agent is required by crates.io or it 403s.
+fn build_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .user_agent(format!(
+            "isitme/{} (https://github.com/Jonathangadeaharder/isitme)",
+            version::current_version()
+        ))
+        .build()?)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // `isitme update` short-circuits: no diagnostic, just reinstall.
+    if let Some(Command::Update) = cli.command {
+        return run_update().await;
+    }
+
     owo_colors::set_override(!cli.no_color);
 
-    // Run pings and speed test concurrently. Pings fan out across all
-    // targets in parallel; the speed test runs in the same window.
+    let client = build_client()?;
+
+    // Run pings, speed test, and version check concurrently. The
+    // version check is 24h-cached and 2s-timeout-capped so it never
+    // adds latency or blocks on a flaky network.
     let pings_fut = run_all_pings_parallel();
     let speed_fut = async {
         if cli.ping_only {
             None
         } else {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(60))
-                .build()
-                .ok()?;
             Some(run_speed_test(&client).await)
         }
     };
+    let version_fut = version::check_for_update(&client);
 
-    let (pings, speed) = if cli.speed_only {
-        (Vec::new(), speed_fut.await)
+    let (pings, speed, latest_version) = if cli.speed_only {
+        let s = speed_fut.await;
+        let v = version_fut.await;
+        (Vec::new(), s, v)
     } else {
-        tokio::join!(pings_fut, speed_fut)
+        tokio::join!(pings_fut, speed_fut, version_fut)
     };
 
     let verdict = build_verdict(BASELINE_HOST, &pings, speed.as_ref());
@@ -97,6 +126,7 @@ async fn main() -> Result<()> {
             pings,
             speed,
             verdict: verdict.clone(),
+            latest_version,
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -108,9 +138,36 @@ async fn main() -> Result<()> {
         if !pings.is_empty() {
             println!("{}", diagnostic_table(&pings, speed.as_ref()));
         }
+
+        // Update notice: one muted line, last, so it never steals
+        // focus from the verdict.
+        if let Some(latest) = &latest_version {
+            use owo_colors::OwoColorize;
+            println!(
+                "\n  {} {} {} {}",
+                "isitme".dimmed(),
+                latest.dimmed().bold(),
+                format!("(you're on {})", version::current_version()).dimmed(),
+                "Run: isitme update".cyan(),
+            );
+        }
     }
 
     std::process::exit(exit_code(verdict.label));
+}
+
+/// `isitme update`: reinstall from crates.io via cargo. cargo itself
+/// decides whether a rebuild is needed (no-op if already latest).
+async fn run_update() -> Result<()> {
+    println!("Updating isitme via cargo...");
+    let status = tokio::process::Command::new("cargo")
+        .args(["install", "isitme"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .await?;
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 /// Ping all targets concurrently. Each target spawns its own ping
@@ -121,8 +178,7 @@ async fn run_all_pings_parallel() -> Vec<PingStats> {
     let targets = hosts();
     let bar = ProgressBar::new(targets.len() as u64);
     bar.set_style(
-        ProgressStyle::with_template("{spinner} pinging {pos}/{len} targets ({msg})")
-            .unwrap(),
+        ProgressStyle::with_template("{spinner} pinging {pos}/{len} targets ({msg})").unwrap(),
     );
     bar.enable_steady_tick(Duration::from_millis(80));
 
@@ -144,10 +200,15 @@ async fn run_all_pings_parallel() -> Vec<PingStats> {
         }
     }
     bar.finish_and_clear();
-    results.into_iter().map(|o| o.unwrap_or(PingStats {
-        target: String::new(),
-        samples_ms: Vec::new(),
-        packets_sent: PING_COUNT,
-        packets_received: 0,
-    })).collect()
+    results
+        .into_iter()
+        .map(|o| {
+            o.unwrap_or(PingStats {
+                target: String::new(),
+                samples_ms: Vec::new(),
+                packets_sent: PING_COUNT,
+                packets_received: 0,
+            })
+        })
+        .collect()
 }
