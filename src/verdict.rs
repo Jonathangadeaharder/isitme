@@ -227,7 +227,7 @@ pub fn build_verdict(
     if any_warn {
         return Verdict {
             label: VerdictLabel::Clear,
-            reason: "It works, barely. Like your Monday motivation."
+            reason: "Not your fault, but things are a bit wobbly. Probably still their problem."
                 .to_string(),
         };
     }
@@ -422,7 +422,7 @@ mod tests {
         };
         let v = build_verdict("8.8.8.8", &pings, Some(&speed));
         assert_eq!(v.label, VerdictLabel::Clear);
-        assert!(v.reason.contains("barely"));
+        assert!(v.reason.contains("wobbly"));
     }
 
     #[test]

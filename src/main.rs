@@ -172,15 +172,14 @@ async fn run_update() -> Result<()> {
 
 /// Ping all targets concurrently. Each target spawns its own ping
 /// process on a blocking thread; results are reassembled in declared
-/// target order so the table output is stable across runs. A spinner
-/// ticks during the wait so the user sees live progress.
+/// target order so the table output is stable across runs. A progress
+/// bar advances as each target completes.
 async fn run_all_pings_parallel() -> Vec<PingStats> {
     let targets = hosts();
     let bar = ProgressBar::new(targets.len() as u64);
     bar.set_style(
         ProgressStyle::with_template("{spinner} pinging {pos}/{len} targets ({msg})").unwrap(),
     );
-    bar.enable_steady_tick(Duration::from_millis(80));
 
     let mut set: JoinSet<(usize, PingStats)> = JoinSet::new();
     for (i, host) in targets.iter().enumerate() {
@@ -199,10 +198,6 @@ async fn run_all_pings_parallel() -> Vec<PingStats> {
             bar.set_message(label);
         }
     }
-    // Stop the steady-tick thread BEFORE clearing, otherwise the tick
-    // thread races with subsequent println output and leaves a stale
-    // spinner line visible above the banner.
-    bar.disable_steady_tick();
     bar.finish_and_clear();
     results
         .into_iter()
