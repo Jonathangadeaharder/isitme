@@ -32,19 +32,18 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
 pub async fn check_for_update(client: &reqwest::Client) -> Option<String> {
     let current = current_version();
 
-    // Fast path: fresh cache, no network.
+    // Cache short-circuit only when it already shows a newer version.
+    // Otherwise still hit the network: a release may have published
+    // after the cache was written, and we'd miss it for up to 24h.
     if let Some(cache) = read_cache()
         && cache.is_fresh()
+        && is_newer(current, &cache.latest)
     {
-        return if is_newer(current, &cache.latest) {
-            Some(cache.latest)
-        } else {
-            None
-        };
+        return Some(cache.latest);
     }
 
-    // Stale or missing: network check, hard-capped at 2s so it can
-    // never block the diagnostic longer than the ping phase.
+    // Network check, hard-capped at 2s so it never blocks the
+    // diagnostic longer than the ping phase.
     let latest = match tokio::time::timeout(
         Duration::from_secs(2),
         fetch_latest_version(client),

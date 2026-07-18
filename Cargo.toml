@@ -1,6 +1,6 @@
 [package]
 name = "isitme"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 description = "Is it me? Diagnose whether your network is the problem in a call (Zoom, Teams, Meet)."
 license = "MIT"
