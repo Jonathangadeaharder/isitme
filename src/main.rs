@@ -12,12 +12,11 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
 use tokio::task::JoinSet;
 
 use ping::{run_ping_async, PING_COUNT};
-use render::{diagnostic_table, verdict_banner};
+use render::{latency_table, speed_table, verdict_banner};
 use speed::run_speed_test;
 use targets::{hosts, BASELINE_HOST};
 use verdict::{build_verdict, exit_code, PingStats, SpeedStats, Status, Verdict};
@@ -134,9 +133,12 @@ async fn main() -> Result<()> {
         let worst = worst_status(&pings, speed.as_ref());
         println!("\n{}", verdict_banner(&verdict, worst));
 
-        // One compact table below.
+        // Two compact tables below: latency per target, then speed.
         if !pings.is_empty() {
-            println!("{}", diagnostic_table(&pings, speed.as_ref()));
+            println!("{}", latency_table(&pings));
+        }
+        if let Some(s) = &speed {
+            println!("\n{}", speed_table(s));
         }
 
         // Update notice: one muted line, last, so it never steals
@@ -172,15 +174,10 @@ async fn run_update() -> Result<()> {
 
 /// Ping all targets concurrently. Each target spawns its own ping
 /// process on a blocking thread; results are reassembled in declared
-/// target order so the table output is stable across runs. A progress
-/// bar advances as each target completes.
+/// target order so the table output is stable across runs. No progress
+/// bar: the whole run is ~2s and a spinner races with stdout output.
 async fn run_all_pings_parallel() -> Vec<PingStats> {
     let targets = hosts();
-    let bar = ProgressBar::new(targets.len() as u64);
-    bar.set_style(
-        ProgressStyle::with_template("{spinner} pinging {pos}/{len} targets ({msg})").unwrap(),
-    );
-
     let mut set: JoinSet<(usize, PingStats)> = JoinSet::new();
     for (i, host) in targets.iter().enumerate() {
         let host = host.to_string();
@@ -192,13 +189,9 @@ async fn run_all_pings_parallel() -> Vec<PingStats> {
     let mut results: Vec<Option<PingStats>> = (0..targets.len()).map(|_| None).collect();
     while let Some(res) = set.join_next().await {
         if let Ok((i, stats)) = res {
-            let label = crate::targets::label_for(&stats.target).to_string();
             results[i] = Some(stats);
-            bar.inc(1);
-            bar.set_message(label);
         }
     }
-    bar.finish_and_clear();
     results
         .into_iter()
         .map(|o| {

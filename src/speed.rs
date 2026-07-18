@@ -4,7 +4,6 @@
 //! network I/O is a thin wrapper around that pure function.
 
 use anyhow::Result;
-use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::verdict::SpeedStats;
 
@@ -13,7 +12,6 @@ use crate::verdict::SpeedStats;
 // rather than biasing toward any one platform.
 const DOWN_URL: &str = "https://speed.cloudflare.com/__down?bytes=4000000";
 const UP_URL: &str = "https://speed.cloudflare.com/__up";
-const DOWN_BYTES: usize = 4_000_000;
 const UPLOAD_BYTES: usize = 2_000_000;
 
 /// Convert byte count and elapsed seconds into Mbps.
@@ -36,34 +34,17 @@ pub async fn run_speed_test(client: &reqwest::Client) -> SpeedStats {
 }
 
 async fn download(client: &reqwest::Client) -> Result<f64> {
-    let bar = ProgressBar::new(DOWN_BYTES as u64);
-    bar.set_style(
-        ProgressStyle::with_template("{spinner} {msg} {wide_bar} {bytes}/{total_bytes}")
-            .unwrap(),
-    );
-    bar.set_message("download");
-
     let start = std::time::Instant::now();
     let mut resp = client.get(DOWN_URL).send().await?.error_for_status()?;
     let mut total: u64 = 0;
     while let Some(chunk) = resp.chunk().await? {
         total += chunk.len() as u64;
-        bar.inc(chunk.len() as u64);
     }
     let elapsed = start.elapsed().as_secs_f64();
-    bar.finish_and_clear();
     Ok(mbps_from_bytes_seconds(total, elapsed))
 }
 
 async fn upload(client: &reqwest::Client) -> Result<f64> {
-    let bar = ProgressBar::new(UPLOAD_BYTES as u64);
-    bar.set_style(
-        ProgressStyle::with_template("{spinner} {msg} {wide_bar} {bytes}/{total_bytes}")
-            .unwrap(),
-    );
-    bar.set_message("upload");
-
-    // Load body into memory; 5MB is fine for a CLI diagnostic tool.
     let body = vec![0u8; UPLOAD_BYTES];
     let start = std::time::Instant::now();
     let resp = client
@@ -75,7 +56,6 @@ async fn upload(client: &reqwest::Client) -> Result<f64> {
         .error_for_status()?;
     let _ = resp.bytes().await?;
     let elapsed = start.elapsed().as_secs_f64();
-    bar.finish_and_clear();
     Ok(mbps_from_bytes_seconds(UPLOAD_BYTES as u64, elapsed))
 }
 

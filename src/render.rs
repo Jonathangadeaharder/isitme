@@ -114,12 +114,12 @@ fn render_table(headers: &[&str], rows: &[Vec<String>]) -> String {
     out
 }
 
-/// One compact diagnostic table: per-target latency (avg, jitter, loss)
-/// with speed folded in as a final row. Min/max are dropped; avg is the
-/// only latency number that matters for a quick gut check during a call.
-pub fn diagnostic_table(pings: &[PingStats], speed: Option<&SpeedStats>) -> String {
-    let headers = ["target", "latency", "jitter", "loss", "speed"];
-    let mut rows: Vec<Vec<String>> = pings
+/// Latency table: one row per ping target with avg latency, jitter,
+/// and packet loss. Min/max dropped; avg is the only latency number
+/// that matters for a quick gut check during a call.
+pub fn latency_table(pings: &[PingStats]) -> String {
+    let headers = ["target", "latency", "jitter", "loss"];
+    let rows: Vec<Vec<String>> = pings
         .iter()
         .map(|p| {
             vec![
@@ -127,23 +127,24 @@ pub fn diagnostic_table(pings: &[PingStats], speed: Option<&SpeedStats>) -> Stri
                 fmt_ms(p.avg_ms()),
                 fmt_ms(p.jitter_ms()),
                 format!("{:.0}%", p.loss_pct()),
-                "-".to_string(),
             ]
         })
         .collect();
-    if let Some(s) = speed {
-        rows.push(vec![
-            "Internet (CF)".to_string(),
-            "-".to_string(),
-            "-".to_string(),
-            "-".to_string(),
-            format!(
-                "{} ↓ / {} ↑",
-                fmt_mbps(s.download_mbps),
-                fmt_mbps(s.upload_mbps),
-            ),
-        ]);
-    }
+    render_table(&headers, &rows)
+}
+
+/// Speed table: one row showing download/upload throughput against the
+/// Cloudflare speed endpoint.
+pub fn speed_table(speed: &SpeedStats) -> String {
+    let headers = ["target", "speed"];
+    let rows = vec![vec![
+        "Internet (CF)".to_string(),
+        format!(
+            "{} ↓ / {} ↑",
+            fmt_mbps(speed.download_mbps),
+            fmt_mbps(speed.upload_mbps),
+        ),
+    ]];
     render_table(&headers, &rows)
 }
 
@@ -232,31 +233,29 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_table_shows_label_and_loss() {
+    fn latency_table_shows_label_and_loss() {
         let pings = vec![stats("8.8.8.8", &[10.0, 20.0], 2, 2)];
-        let t = diagnostic_table(&pings, None);
-        // Label resolves to the human form, not the raw host.
+        let t = latency_table(&pings);
         assert!(t.contains("Google DNS (baseline)"));
         assert!(t.contains("0%"));
     }
 
     #[test]
-    fn diagnostic_table_has_five_headers() {
+    fn latency_table_has_four_headers() {
         let pings = vec![stats("8.8.8.8", &[10.0, 20.0], 2, 2)];
-        let t = diagnostic_table(&pings, None);
-        for h in ["target", "latency", "jitter", "loss", "speed"] {
+        let t = latency_table(&pings);
+        for h in ["target", "latency", "jitter", "loss"] {
             assert!(t.contains(h), "missing header {}", h);
         }
     }
 
     #[test]
-    fn diagnostic_table_appends_speed_row_when_given() {
-        let pings = vec![stats("zoom.us", &[10.0, 20.0], 2, 2)];
+    fn speed_table_shows_down_and_up() {
         let s = SpeedStats {
             download_mbps: Some(50.0),
             upload_mbps: Some(10.0),
         };
-        let t = diagnostic_table(&pings, Some(&s));
+        let t = speed_table(&s);
         assert!(t.contains("Internet (CF)"));
         assert!(t.contains("50.0"));
         assert!(t.contains("10.0"));
@@ -265,10 +264,10 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_table_speed_dash_when_no_speed() {
+    fn latency_table_has_no_speed_column() {
         let pings = vec![stats("8.8.8.8", &[10.0, 20.0], 2, 2)];
-        let t = diagnostic_table(&pings, None);
-        // No speed row appended.
+        let t = latency_table(&pings);
+        assert!(!t.contains("speed"));
         assert!(!t.contains("Internet (CF)"));
     }
 
